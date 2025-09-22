@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Chat MVP</title></head>
+<body>
+<div id="chat" style="max-width:700px;margin:20px auto"></div>
+<input id="msgInput" style="width:70%"/>
+<button id="sendBtn">Skicka</button>
+
+<script>
+const webhookUrl = "https://hook.eu2.make.com/qhakqbhaq75m0tj6cfv2hqhlr71rrv1p"; // byt
+
+// Vi håller historiken i en vanlig array i minnet (går bort vid reload)
+let history = [
+{role: 'system', content: 'Du är en hjälpsam assistent för webbplatsen.'}
+];
+
+// Hjälp: bygg prompt-strängen från history-arrayen
+function buildPromptFromHistory(hist){
+// Vi saffar roller med prefix så att modellen ser vem som sagt vad
+// Ex: "[SYSTEM]\n... \n\n[USER]\n... \n\n[ASSISTANT]\n..."
+const parts = hist.map(m => {
+const tag = (m.role === 'system') ? '[SYSTEM]' : (m.role === 'user') ? '[USER]' : '[ASSISTANT]';
+return `${tag}\n${m.content}`;
+});
+// Gör en enda sträng med separerar
+return parts.join("\n\n") + "\n\n[USER]\n"; // lägg till USER: så DeepSeek vet att nästa är användarens senaste fråga
+}
+
+// Trimma historia så den inte blir för lång
+function trimHistory(arr, maxItems = 30){
+if(arr.length <= maxItems) return arr;
+return arr.slice(arr.length - maxItems);
+}
+
+async function sendMessageFromUser(text){
+// lägga till användarens meddelande i history
+history.push({role:'user', content: text});
+renderChat();
+
+// trimma
+history = trimHistory(history, 30);
+
+// bygg prompt (inklusive hela history)
+// OBS: vi lägger hela konversationen i en sträng som skickas som prompt
+const prompt = buildPromptFromHistory(history) + text; // vi lägger på text efter [USER] taggen
+
+const payload = {
+sessionId: Date.now().toString(),
+pageUrl: window.location.href,
+// skickar både history (för debugging) och prompt (som Make enkelt kan använda)
+history: history,
+prompt: prompt
+};
+
+try {
+const res = await fetch(webhookUrl, {
+method: 'POST',
+headers: {'Content-Type':'application/json'},
+body: JSON.stringify(payload),
+mode: 'cors'
+});
+
+if(!res.ok){
+const txt = await res.text();
+console.error('Make returned', res.status, txt);
+history.push({role:'assistant', content: 'Fel: kunde inte kontakta AI (kod '+res.status+')'});
+renderChat();
+return;
+}
+
+const data = await res.json();
+// förvänta att Make returnerar {reply: "text..."} eller JSON-object beroende på DeepSeek response-format
+const reply = data.reply ?? data.output ?? JSON.stringify(data);
+history.push({role:'assistant', content: reply});
+renderChat();
+} catch(err){
+console.error('Network error', err);
+history.push({role:'assistant', content: 'Nätverksfel: ' + err.message});
+renderChat();
+}
+}
+
+// UI hooks (enkelt)
+document.getElementById('sendBtn').addEventListener('click', async () => {
+const txt = document.getElementById('msgInput').value.trim();
+if(!txt) return;
+document.getElementById('msgInput').value = '';
+await sendMessageFromUser(txt);
+});
+
+function renderChat(){
+const container = document.getElementById('chat');
+container.innerHTML = '';
+history.forEach(m => {
+if(m.role === 'system') return;
+const el = document.createElement('div');
+el.style.margin = '6px';
+el.style.padding = '8px';
+el.style.borderRadius = '6px';
+el.style.background = m.role === 'user' ? '#e6f3ff' : '#f1f1f1';
+el.innerText = (m.role === 'user' ? 'Du: ' : 'AI: ') + m.content;
+container.appendChild(el);
+});
+}
+renderChat();
+</script>
+</body>
+</html>
